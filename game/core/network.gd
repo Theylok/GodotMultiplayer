@@ -6,9 +6,17 @@ signal join_success
 signal join_fail
 signal player_list_changed
 signal player_removed(player_info)
+signal disconnected
+signal network_tick
+
+
+const NETWORK_TICK_RATE: float = 1.0 / 30.0
 
 
 var players := {}
+
+
+var _network_tick_timer: Timer
 
 
 func _ready() -> void:
@@ -27,6 +35,11 @@ func create_server(port: int, max_players: int) -> void:
 		return
 		
 	get_tree().network_peer = net
+	
+	_network_tick_timer = Timer.new()
+	add_child(_network_tick_timer)
+	_network_tick_timer.connect("timeout", self, "_on_network_tick_timer_timeout")
+	_network_tick_timer.start(NETWORK_TICK_RATE)
 	
 	emit_signal("server_created")
 	register_player(GameState.player_info)
@@ -61,6 +74,10 @@ remote func unregister_player(id: int) -> void:
 	players.erase(id)
 	emit_signal("player_list_changed")
 	emit_signal("player_removed", player_info)
+	
+	
+remotesync func _network_tick() -> void:
+	emit_signal("network_tick")
 
 
 func _on_player_connected(id):
@@ -89,5 +106,13 @@ func _on_connection_failed():
 
 
 func _on_disconnected_from_server():
+	print("Disconnected from server")
+	
+	get_tree().network_peer = null
+	emit_signal("disconnected")	
 	players.clear()
 	GameState.player_info.network_id = 1
+	
+	
+func _on_network_tick_timer_timeout() -> void:
+	rpc_unreliable("_network_tick")

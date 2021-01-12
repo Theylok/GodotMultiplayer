@@ -1,6 +1,10 @@
 extends Spatial
 
 
+var _player_scene = preload("res://player/player.tscn")
+var _local_player_scene = preload("res://player/local_player.tscn")
+
+
 func _ready() -> void:
 	if get_tree().is_network_server():
 		Network.connect("player_removed", self, "_on_player_removed")
@@ -20,13 +24,14 @@ remote func spawn_players(player_info: Dictionary):
 			if id != 1:
 				rpc_id(id, "spawn_players", player_info)
 				
-	var player_scene = load("res://player/local_player.tscn")
-	var player = player_scene.instance()
-	
-	if player_info.network_id != 1:
-		player.set_network_master(player_info.network_id)
+	var player = null
+	if player_info.network_id == GameState.player_info.network_id:
+		player = _local_player_scene.instance()
+	else:
+		player = _player_scene.instance()
 		
 	player.set_name(str(player_info.network_id))
+	player.owner_network_id = player_info.network_id
 	
 	add_child(player)
 
