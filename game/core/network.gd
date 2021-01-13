@@ -8,12 +8,16 @@ signal player_list_changed
 signal player_removed(player_info)
 signal disconnected
 signal network_tick
+signal ping_updated(peer_id, value)
 
 
 const NETWORK_TICK_RATE: float = 1.0 / 30.0
+const PING_INTERVAL: float = 1.0
+const PING_TIMEOUT: float = 5.0
 
 
 var players := {}
+var ping_data := {}
 
 
 var _network_tick_timer: Timer
@@ -76,18 +80,82 @@ remote func unregister_player(id: int) -> void:
 	emit_signal("player_removed", player_info)
 	
 	
+func request_ping(peer_id) -> void:
+	ping_data[peer_id].timer.connect("timeout", self, "_on_ping_timeout", [peer_id], CONNECT_ONESHOT)
+	ping_data[peer_id].timer.start(PING_TIMEOUT)
+	
+	rpc_unreliable_id(peer_id, "on_ping", ping_data[peer_id].signature, ping_data[peer_id].last_ping)
+	
+	
+remote func on_ping(signature, last_ping) -> void:
+	rpc_unreliable_id(1, "on_pong", signature)
+	
+	
+remote func on_pong(signature) -> void:
+	if not get_tree().is_network_server():
+		return
+		
+	var peer_id = get_tree().get_rpc_sender_id()
+	
+	if ping_data[peer_id].signature == signature:
+		ping_data[peer_id].last_ping = (PING_TIMEOUT - ping_data[peer_id].timer.time_left) * 1000.0
+		
+		ping_data[peer_id].timer.stop()
+		ping_data[peer_id].timer.disconnect("timeout", self, "_on_ping_timeout")
+		ping_data[peer_id].timer.connect("timeout", self, "_on_ping_interval", [peer_id], CONNECT_ONESHOT)
+		ping_data[peer_id].timer.start(PING_INTERVAL)
+		
+		rpc_unreliable("ping_value_changed", peer_id, ping_data[peer_id].last_ping)
+		
+		
+remotesync func ping_value_changed(peer_id, value) -> void:
+	emit_signal("ping_updated", peer_id, value)
+	
+	
+func _on_ping_timeout(peer_id) -> void:
+	ping_data[peer_id].packets_lost += 1
+	ping_data[peer_id].signature += 1
+	
+	call_deferred("request_ping", peer_id)
+	
+	
+func _on_ping_interval(peer_id) -> void:
+	ping_data[peer_id].signature += 1
+	request_ping(peer_id)
+	
+	
 remotesync func _network_tick() -> void:
 	emit_signal("network_tick")
 
 
 func _on_player_connected(id):
-	pass
+	if get_tree().is_network_server():
+		var ping_entry := {
+			timer = Timer.new(),
+			signature = 0,
+			packets_lost = 0,
+			last_ping = 0,
+		}
+		
+		ping_entry.timer.one_shot = true
+		ping_entry.timer.wait_time = PING_INTERVAL
+		ping_entry.timer.process_mode = Timer.TIMER_PROCESS_IDLE
+		ping_entry.timer.connect("timeout", self, "_on_ping_interval", [id], CONNECT_ONESHOT)
+		ping_entry.timer.name = "ping_timer_" + str(id)
+		
+		add_child(ping_entry.timer)
+		ping_data[id] = ping_entry
+		ping_entry.timer.start()
 
 
 func _on_player_disconnected(id):
 	print("Player ", players[id].name, " disconnected form the server")
 	
 	if get_tree().is_network_server():
+		ping_data[id].timer.stop()
+		ping_data[id].timer.queue_free()
+		ping_data.erase(id)
+		
 		unregister_player(id)
 		rpc("unregister_player", id)
 

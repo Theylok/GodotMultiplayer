@@ -1,13 +1,12 @@
 extends CanvasLayer
 
 
-onready var local_player_name: Label = find_node("LocalPlayerName")
 onready var player_list: VBoxContainer = find_node("PlayerList")
+
 
 func _ready() -> void:
 	Network.connect("player_list_changed", self, "_on_player_list_changed")
-	
-	local_player_name.text = GameState.player_info.name
+	Network.connect("ping_updated", self, "_on_ping_updated")
 	
 	
 func _on_player_list_changed() -> void:
@@ -15,7 +14,13 @@ func _on_player_list_changed() -> void:
 		child.queue_free()
 		
 	for id in Network.players:
-		if id != GameState.player_info.network_id:
-			var label = Label.new()
-			label.text = Network.players[id].name
-			player_list.add_child(label)
+		var label := Label.new()
+		label.name = str(id)
+		label.text = Network.players[id].name
+		player_list.add_child(label)
+			
+			
+func _on_ping_updated(peer_id, value) -> void:
+	var label: Label =  player_list.get_node(str(peer_id))
+	if label:
+		label.text = Network.players[peer_id].name + " (" + str(int(value)) + "ms)"
